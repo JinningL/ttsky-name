@@ -3,7 +3,7 @@
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, RisingEdge, Timer
+from cocotb.triggers import ClockCycles, RisingEdge, FallingEdge
 
 
 @cocotb.test()
@@ -30,8 +30,8 @@ async def test_project(dut):
     for sample in samples:
         dut.ui_in.value = sample
         await RisingEdge(dut.clk)
-        # Sample after signal updates settle for this edge.
-        await Timer(1, unit="ns")
+        # For gate-level sim, allow propagation through many unit-delay gates.
+        await FallingEdge(dut.clk)
 
         hist = [sample, hist[0], hist[1], hist[2]]
         exp = sum(hist) >> 2
