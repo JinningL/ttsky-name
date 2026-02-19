@@ -21,7 +21,7 @@ module tt_um_fir_filter (
     delay_line delay_inst (
         .clk(clk),
         .rst_n(rst_n),
-        .din(ui_in),
+        .sample_in(ui_in),
         .x0(x0),
         .x1(x1),
         .x2(x2),
