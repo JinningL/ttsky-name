@@ -3,7 +3,7 @@
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles
+from cocotb.triggers import ClockCycles, RisingEdge, Timer
 
 
 @cocotb.test()
@@ -22,13 +22,18 @@ async def test_project(dut):
     await ClockCycles(dut.clk, 10)
     dut.rst_n.value = 1
 
-    # Input stream and expected moving-average outputs:
     # y[n] = floor((x[n] + x[n-1] + x[n-2] + x[n-3]) / 4)
+    # Keep a software model of the 4-sample delay line.
     samples = [4, 8, 12, 16, 0, 0]
-    expected = [1, 3, 6, 10, 9, 7]
+    hist = [0, 0, 0, 0]
 
-    for sample, exp in zip(samples, expected):
+    for sample in samples:
         dut.ui_in.value = sample
-        await ClockCycles(dut.clk, 1)
+        await RisingEdge(dut.clk)
+        # Sample after signal updates settle for this edge.
+        await Timer(1, unit="ns")
+
+        hist = [sample, hist[0], hist[1], hist[2]]
+        exp = sum(hist) >> 2
         got = int(dut.uo_out.value)
         assert got == exp, f"sample={sample}, expected={exp}, got={got}"
