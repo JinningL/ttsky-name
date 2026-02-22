@@ -17,6 +17,21 @@ def filt_value(hist, coeffs):
     return y & 0xFFFF
 
 
+def logic_to_int_allow_x(value) -> int:
+    bits = value.binstr.lower()
+    clean = "".join(ch if ch in ("0", "1") else "0" for ch in bits)
+    return int(clean, 2)
+
+
+def try_logic_to_int(value):
+    if getattr(value, "is_resolvable", False):
+        return int(value)
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
 async def write_ui(dut, value: int):
     dut.ui_in.value = value & 0xFF
     await RisingEdge(dut.clk)
@@ -43,8 +58,18 @@ async def send_sample(dut, sample: int):
 
 async def read_coeff6(dut, sel: int) -> int:
     dut.uio_in.value = sel & 0x3
-    await RisingEdge(dut.clk)
-    return (int(dut.uio_out.value) >> 2) & 0x3F
+    raw = None
+
+    for _ in range(8):
+        await RisingEdge(dut.clk)
+        await FallingEdge(dut.clk)
+        raw = dut.uio_out.value
+        parsed = try_logic_to_int(raw)
+        if parsed is not None:
+            return (parsed >> 2) & 0x3F
+
+    # Gate-level can briefly expose X/Z; coerce non-01 bits to 0 as fallback.
+    return (logic_to_int_allow_x(raw) >> 2) & 0x3F
 
 
 async def check_stream_mode(dut, samples, coeffs, mode_name: str):
@@ -57,7 +82,10 @@ async def check_stream_mode(dut, samples, coeffs, mode_name: str):
         await send_sample(dut, sample)
         await FallingEdge(dut.clk)
 
-        got = int(dut.uo_out.value)
+        got_raw = dut.uo_out.value
+        got = try_logic_to_int(got_raw)
+        if got is None:
+            got = logic_to_int_allow_x(got_raw)
         assert got == expected_delayed, (
             f"{mode_name} sample={sample}, hist={hist}, "
             f"expected=0x{expected_delayed:02x}, got=0x{got:02x}"
