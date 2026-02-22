@@ -18,7 +18,7 @@ def filt_value(hist, coeffs):
 
 
 def logic_to_int_allow_x(value) -> int:
-    bits = value.binstr.lower()
+    bits = str(value).lower()
     clean = "".join(ch if ch in ("0", "1") else "0" for ch in bits)
     return int(clean, 2)
 

@@ -35,7 +35,8 @@ endif
 COMPILE_ARGS 		+= -I$(SRC_DIR)
 
 # Include the testbench sources:
-TOPLEVEL = tt_um_fir_filter
+VERILOG_SOURCES += $(PWD)/tb.v
+TOPLEVEL = tb
 
 # List test modules to run, separated by commas and without the .py suffix:
 COCOTB_TEST_MODULES = test

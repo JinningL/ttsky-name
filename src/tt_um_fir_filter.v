@@ -27,9 +27,10 @@ module tt_um_fir_filter (
     //   ui_in[3]   = mode_enable (1=load preset mode, 0=write h2/h3)
     //   ui_in[2:0] = coefficient data (when mode_enable=0)
     //
+    // uio_in[1:0]  = coefficient select (00=h0, 01=h1, 10=h2, 11=h3)
     // uio_out[0]   = coeff_update_flag (pulses when coefficient written)
     // uio_out[1]   = pipeline_valid (indicates valid filtered output)
-    // uio_out[7:2] = h0 coefficient readback (6-bit value)
+    // uio_out[7:2] = selected coefficient readback (6-bit value)
     // ========================================================================
     
     wire [1:0] op_type;
@@ -159,12 +160,21 @@ module tt_um_fir_filter (
     end
     
     // ========================================================================
-    // COEFFICIENT READBACK (SIMPLIFIED for gate-level compatibility)
+    // COEFFICIENT READBACK
     // ========================================================================
-    // Always output h0 coefficient - no selection needed
-    // This avoids bidirectional pin complexity
-    wire [7:0] coeff_readback;
-    assign coeff_readback = h0_reg;
+    wire [1:0] coeff_select;
+    reg  [7:0] coeff_readback;
+
+    assign coeff_select = uio_in[1:0];
+
+    always @(*) begin
+        case (coeff_select)
+            2'b00: coeff_readback = h0_reg;
+            2'b01: coeff_readback = h1_reg;
+            2'b10: coeff_readback = h2_reg;
+            2'b11: coeff_readback = h3_reg;
+        endcase
+    end
     
     // ========================================================================
     // SAMPLE INPUT AND DELAY LINE
@@ -222,14 +232,14 @@ module tt_um_fir_filter (
     assign uo_out = y_output_reg[15:8];
     
     // ========================================================================
-    // BIDIRECTIONAL I/O OUTPUTS (ALL OUTPUTS for gate-level compatibility)
+    // BIDIRECTIONAL I/O OUTPUTS
     // ========================================================================
-    // uio_out[0]   = coeff_update_flag
-    // uio_out[1]   = pipeline_valid
-    // uio_out[7:2] = h0 coefficient readback (6 bits)
+    // uio_out[0]   = coeff_update_flag (OUTPUT)
+    // uio_out[1]   = pipeline_valid (OUTPUT)
+    // uio_out[7:2] = selected coefficient readback (OUTPUT - 6 bits)
     assign uio_out = {coeff_readback[5:0], pipeline_valid, coeff_update_flag};
-    assign uio_oe  = 8'hFF;  // All outputs
+    assign uio_oe  = 8'b11111100;  // [7:2] outputs, [1:0] inputs
     
-    wire _unused = &{ena, uio_in, coeff_readback[7:6], 1'b0};
+    wire _unused = &{ena, uio_in[7:2], coeff_readback[7:6], 1'b0};
 
 endmodule
