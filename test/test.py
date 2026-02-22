@@ -78,7 +78,11 @@ async def check_stream_mode(dut, samples, coeffs, mode_name: str):
     hist = [0, 0, 0, 0]
     expected_delayed = 0
 
-    for sample in samples:
+    dut._log.info(
+        f"[{mode_name}] coeffs={coeffs} samples={samples}"
+    )
+
+    for idx, sample in enumerate(samples):
         await send_sample(dut, sample)
         await FallingEdge(dut.clk)
 
@@ -86,6 +90,16 @@ async def check_stream_mode(dut, samples, coeffs, mode_name: str):
         got = try_logic_to_int(got_raw)
         if got is None:
             got = logic_to_int_allow_x(got_raw)
+        uio_raw = dut.uio_out.value
+        uio_val = try_logic_to_int(uio_raw)
+        if uio_val is None:
+            uio_val = logic_to_int_allow_x(uio_raw)
+
+        dut._log.info(
+            f"[{mode_name}] step={idx} sample={sample:02d} "
+            f"hist={hist} exp=0x{expected_delayed:02x} got=0x{got:02x} "
+            f"uio_out=0x{uio_val:02x}"
+        )
         assert got == expected_delayed, (
             f"{mode_name} sample={sample}, hist={hist}, "
             f"expected=0x{expected_delayed:02x}, got=0x{got:02x}"
