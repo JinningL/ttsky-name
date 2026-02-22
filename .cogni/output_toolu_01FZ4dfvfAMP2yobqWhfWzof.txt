@@ -1,0 +1,6 @@
+=== Command: cd /Users/liujinning/ttsky-name && rm -f src/delay_line.v src/fir_core.v test/tb_fir_filter.sv test/tb_fir_filter_new.sv test/tb.v (2026-02-22T09:47:13.843Z) ===
+Exit Code: 0
+Output:
+
+=== End Output ===
+

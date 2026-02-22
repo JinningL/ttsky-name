@@ -1,10 +1,11 @@
-# FIR Filter Simulation Dependencies
+# Enhanced FIR DSP Peripheral Simulation Dependencies
+# Version 2.0 - With Status Outputs, Readback, and Preset Modes
 
-# Target: FIR filter testbench
+# Main target: Enhanced FIR filter testbench
 fir_filter_test:
   deps:
-    - src/delay_line.v
-    - src/fir_core.v
+    - src/delay_line_controlled.v
+    - src/fir_core_dynamic.v
     - src/tt_um_fir_filter.v
-    - test/tb_fir_filter.sv
-  top: tb_fir_filter
+    - test/tb_fir_filter_enhanced.sv
+  top: tb_fir_filter_enhanced

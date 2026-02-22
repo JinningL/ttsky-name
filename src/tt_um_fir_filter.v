@@ -11,86 +11,235 @@ module tt_um_fir_filter (
     input  wire       rst_n
 );
 
-    // -----------------------
-    // Mode select
-    // ui_in[1:0] = mode
-    // ui_in[7:2] = sample input
-    // -----------------------
-    wire [1:0] mode;
-    assign mode = ui_in[1:0];
-
+    // ========================================================================
+    // REGISTER-MAPPED INTERFACE (ENHANCED!)
+    // ========================================================================
+    // ui_in[7:6] = operation type:
+    //   00 = input sample data (streaming mode)
+    //   01 = write coefficient h0
+    //   10 = write coefficient h1  
+    //   11 = mode selection or write h2/h3
+    //
+    // ui_in[5:0] = data payload (6-bit)
+    //
+    // For op_type == 11 (mode/coeff control):
+    //   ui_in[5:4] = mode select (00=bypass, 01=avg, 10=lowpass, 11=highpass)
+    //   ui_in[3]   = mode_enable (1=load preset mode, 0=write h2/h3)
+    //   ui_in[2:0] = coefficient data (when mode_enable=0)
+    //
+    // uio_in[1:0] = coefficient readback select (00=h0, 01=h1, 10=h2, 11=h3)
+    // uio_out[7:2] = selected coefficient value (6-bit readback)
+    // uio_out[1] = pipeline_valid (indicates valid filtered output)
+    // uio_out[0] = coeff_update_flag (pulses when coefficient written)
+    // ========================================================================
+    
+    wire [1:0] op_type;
+    wire [5:0] data_in;
+    
+    assign op_type = ui_in[7:6];
+    assign data_in = ui_in[5:0];
+    
+    // ========================================================================
+    // COEFFICIENT REGISTERS (runtime configurable)
+    // ========================================================================
+    reg signed [7:0] h0_reg;  // Coefficient 0
+    reg signed [7:0] h1_reg;  // Coefficient 1
+    reg signed [7:0] h2_reg;  // Coefficient 2
+    reg signed [7:0] h3_reg;  // Coefficient 3
+    
+    // ========================================================================
+    // MODE REGISTER (selects filter behavior)
+    // ========================================================================
+    // Mode 0: Bypass (1,0,0,0)
+    // Mode 1: Moving average (1,1,1,1)
+    // Mode 2: Weighted low-pass (4,2,1,1)
+    // Mode 3: High-pass edge detector (1,-1,0,0)
+    reg [1:0] mode_reg;
+    
+    // ========================================================================
+    // STATUS REGISTERS (NEW!)
+    // ========================================================================
+    reg coeff_update_flag;   // Pulses when coefficient is written
+    reg pipeline_valid;       // Indicates output contains valid data
+    reg [2:0] pipeline_count; // Counts cycles after reset for valid data
+    
+    // ========================================================================
+    // REGISTER WRITE LOGIC (ENHANCED!)
+    // ========================================================================
+    wire mode_enable;
+    wire [1:0] mode_select;
+    
+    assign mode_enable = (op_type == 2'b11) && data_in[3];  // Mode load enable
+    assign mode_select = data_in[5:4];                       // Mode selection bits
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            // Default coefficients (moving average)
+            h0_reg <= 8'sd1;
+            h1_reg <= 8'sd1;
+            h2_reg <= 8'sd1;
+            h3_reg <= 8'sd1;
+            mode_reg <= 2'b01;  // Default to moving average mode
+            coeff_update_flag <= 1'b0;
+            pipeline_valid <= 1'b0;
+            pipeline_count <= 3'b000;
+        end
+        else begin
+            // Default: clear update flag each cycle
+            coeff_update_flag <= 1'b0;
+            
+            // Track pipeline validity (valid after 4 samples)
+            if (sample_en) begin
+                if (pipeline_count < 3'd4)
+                    pipeline_count <= pipeline_count + 1'b1;
+                pipeline_valid <= (pipeline_count >= 3'd3);
+            end
+            
+            case (op_type)
+                2'b01: begin  // Write h0
+                    h0_reg <= {2'b00, data_in};
+                    coeff_update_flag <= 1'b1;
+                end
+                
+                2'b10: begin  // Write h1
+                    h1_reg <= {2'b00, data_in};
+                    coeff_update_flag <= 1'b1;
+                end
+                
+                2'b11: begin  // Mode select OR write h2/h3
+                    if (mode_enable) begin
+                        // Load preset mode coefficients
+                        mode_reg <= mode_select;
+                        coeff_update_flag <= 1'b1;
+                        
+                        case (mode_select)
+                            2'b00: begin  // Bypass mode
+                                h0_reg <= 8'sd1;
+                                h1_reg <= 8'sd0;
+                                h2_reg <= 8'sd0;
+                                h3_reg <= 8'sd0;
+                            end
+                            2'b01: begin  // Moving average mode
+                                h0_reg <= 8'sd1;
+                                h1_reg <= 8'sd1;
+                                h2_reg <= 8'sd1;
+                                h3_reg <= 8'sd1;
+                            end
+                            2'b10: begin  // Low-pass mode
+                                h0_reg <= 8'sd4;
+                                h1_reg <= 8'sd2;
+                                h2_reg <= 8'sd1;
+                                h3_reg <= 8'sd1;
+                            end
+                            2'b11: begin  // High-pass mode
+                                h0_reg <= 8'sd1;
+                                h1_reg <= -8'sd1;  // Negative coefficient
+                                h2_reg <= 8'sd0;
+                                h3_reg <= 8'sd0;
+                            end
+                        endcase
+                    end
+                    else begin
+                        // Write h2/h3 directly (legacy mode)
+                        h2_reg <= {2'b00, data_in[5:3], 3'b000};  // Upper 3 bits -> h2
+                        h3_reg <= {5'b00000, data_in[2:0]};       // Lower 3 bits -> h3
+                        coeff_update_flag <= 1'b1;
+                    end
+                end
+                
+                default: begin  // Sample operation (00)
+                    // Keep registers unchanged during sampling
+                    h0_reg <= h0_reg;
+                    h1_reg <= h1_reg;
+                    h2_reg <= h2_reg;
+                    h3_reg <= h3_reg;
+                    mode_reg <= mode_reg;
+                end
+            endcase
+        end
+    end
+    
+    // ========================================================================
+    // COEFFICIENT READBACK (NEW!)
+    // ========================================================================
+    wire [1:0] coeff_select;
+    reg [7:0] coeff_readback;
+    
+    assign coeff_select = uio_in[1:0];
+    
+    always @(*) begin
+        case (coeff_select)
+            2'b00: coeff_readback = h0_reg;
+            2'b01: coeff_readback = h1_reg;
+            2'b10: coeff_readback = h2_reg;
+            2'b11: coeff_readback = h3_reg;
+        endcase
+    end
+    
+    // ========================================================================
+    // SAMPLE INPUT AND DELAY LINE
+    // ========================================================================
+    // Only update delay line during sample operations (op_type == 00)
+    wire sample_en;
+    assign sample_en = (op_type == 2'b00);
+    
     wire [7:0] sample;
-    assign sample = {2'b00, ui_in[7:2]};  // 6bit -> 8bit
-
-    // -----------------------
-    // Delay line outputs
-    // -----------------------
+    assign sample = {2'b00, data_in};  // Extend 6-bit to 8-bit unsigned
+    
     wire [7:0] x0, x1, x2, x3;
-
-    delay_line delay_inst (
+    
+    delay_line_controlled delay_inst (
         .clk(clk),
         .rst_n(rst_n),
+        .sample_en(sample_en),
         .sample_in(sample),
         .x0(x0),
         .x1(x1),
         .x2(x2),
         .x3(x3)
     );
-
-    // -----------------------
-    // Filters
-    // -----------------------
-
-    // 0: bypass
-    wire [15:0] y_bypass;
-    assign y_bypass = {8'b0, x0};
-
-    // 1: moving average
-    wire [15:0] y_avg;
-    fir_core #(.C0(1), .C1(1), .C2(1), .C3(1)) avg_filter (
-        .x0(x0), .x1(x1), .x2(x2), .x3(x3),
-        .y(y_avg)
+    
+    // ========================================================================
+    // CONFIGURABLE FIR CORE
+    // ========================================================================
+    wire signed [15:0] y_filtered;
+    
+    fir_core_dynamic fir_inst (
+        .x0(x0),
+        .x1(x1),
+        .x2(x2),
+        .x3(x3),
+        .h0(h0_reg),
+        .h1(h1_reg),
+        .h2(h2_reg),
+        .h3(h3_reg),
+        .y(y_filtered)
     );
-
-    // 2: stronger low-pass
-    wire [15:0] y_low;
-    fir_core #(.C0(4), .C1(2), .C2(1), .C3(1)) low_filter (
-        .x0(x0), .x1(x1), .x2(x2), .x3(x3),
-        .y(y_low)
-    );
-
-    // 3: high-pass (edge detector)
-    wire [15:0] y_high;
-    fir_core #(.C0(1), .C1(-1), .C2(0), .C3(0)) high_filter (
-        .x0(x0), .x1(x1), .x2(x2), .x3(x3),
-        .y(y_high)
-    );
-
-    // -----------------------
-    // Mode selector (REGISTERED!)
-    // -----------------------
-    reg [15:0] y_selected;
-
+    
+    // ========================================================================
+    // OUTPUT PIPELINE REGISTER
+    // ========================================================================
+    reg [15:0] y_output_reg;
+    
     always @(posedge clk or negedge rst_n) begin
-        if(!rst_n)
-            y_selected <= 0;
-        else begin
-            case(mode)
-                2'b00: y_selected <= y_bypass;
-                2'b01: y_selected <= y_avg;
-                2'b10: y_selected <= y_low;
-                2'b11: y_selected <= y_high;
-            endcase
-        end
+        if (!rst_n)
+            y_output_reg <= 16'b0;
+        else
+            y_output_reg <= y_filtered;  // Continuously update
     end
-
-    // output
-    assign uo_out = y_selected[15:8]; // scale down
-
-    // unused pins
-    assign uio_out = 8'b0;
-    assign uio_oe  = 8'b0;
-
-    wire _unused = &{ena, uio_in, 1'b0};
+    
+    // Scale output: take upper 8 bits for fixed-point scaling
+    assign uo_out = y_output_reg[15:8];
+    
+    // ========================================================================
+    // BIDIRECTIONAL I/O OUTPUTS (ENHANCED!)
+    // ========================================================================
+    // uio_out[7:2] = coefficient readback (6 bits)
+    // uio_out[1]   = pipeline_valid
+    // uio_out[0]   = coeff_update_flag
+    assign uio_out = {coeff_readback[5:0], pipeline_valid, coeff_update_flag};
+    assign uio_oe  = 8'hFF;  // All outputs enabled
+    
+    wire _unused = &{ena, uio_in[7:2], coeff_readback[7:6], 1'b0};
 
 endmodule
